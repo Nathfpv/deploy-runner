@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "request_id": "public-runner-token-test-20260929",
+  "target": "apps.maffeo.ch",
+  "source_sha": "93977c8655ff96c95350a6ecf1af296e4a8e713f",
+  "mode": "dry-run"
+}
