@@ -1,0 +1,196 @@
+name: Public production deploy runner
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - requests/deploy.json
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Allowlisted deployment target from private deploy-infra
+        required: true
+        type: string
+      source_sha:
+        description: Exact 40-character source commit SHA
+        required: true
+        type: string
+      mode:
+        description: deploy or dry-run
+        required: true
+        default: deploy
+        type: choice
+        options:
+          - deploy
+          - dry-run
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-production-deployments
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout public runner shell
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: runner
+          persist-credentials: false
+
+      - name: Checkout private deployment controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Nathfpv/deploy-infra
+          ref: main
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          path: infra
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Pin private controller commit
+        id: controller
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "sha=$(git -C infra rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Materialize deployment request
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TARGET: ${{ inputs.target }}
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+          INPUT_MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            python3 - <<'PY'
+          import json, os
+          request = {
+              "schema": 1,
+              "request_id": f"manual-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}",
+              "target": os.environ["INPUT_TARGET"],
+              "source_sha": os.environ["INPUT_SOURCE_SHA"],
+              "mode": os.environ["INPUT_MODE"],
+          }
+          with open("request.json", "w", encoding="utf-8") as fh:
+              json.dump(request, fh, indent=2)
+              fh.write("\n")
+          PY
+          else
+            test -f runner/requests/deploy.json
+            cp runner/requests/deploy.json request.json
+          fi
+
+      - name: Validate deployment request against private allowlist
+        id: request
+        run: python3 infra/scripts/validate_request.py --request request.json --targets infra/config/targets.json
+
+      - name: Verify requested source is current configured branch
+        shell: bash
+        env:
+          SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          REPOSITORY: ${{ steps.request.outputs.repository }}
+          BRANCH: ${{ steps.request.outputs.branch }}
+          SOURCE_SHA: ${{ steps.request.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test -n "$SOURCE_REPO_TOKEN" || { echo "::error::SOURCE_REPO_TOKEN is missing."; exit 1; }
+          branch_json="$(mktemp)"
+          code="$(curl -sS -o "$branch_json" -w '%{http_code}' \
+            -H "Authorization: Bearer $SOURCE_REPO_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$REPOSITORY/branches/$BRANCH")"
+          test "$code" = "200" || { echo "::error::Cannot read configured source branch (HTTP $code)."; exit 1; }
+          head_sha="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["commit"]["sha"])' "$branch_json")"
+          test "$head_sha" = "$SOURCE_SHA" || { echo "::error::Requested SHA is not the current configured branch head."; exit 1; }
+
+      - name: Checkout exact private source commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ steps.request.outputs.repository }}
+          ref: ${{ steps.request.outputs.source_sha }}
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          path: source
+          lfs: true
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify checked-out source
+        working-directory: source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ steps.request.outputs.source_sha }}"
+          if git lfs ls-files --all --error-unmatch >/dev/null 2>&1; then
+            git lfs fsck
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ steps.request.outputs.node_version }}
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install --yes rsync libimage-exiftool-perl python3-paramiko
+
+      - name: Build and test without provider credentials
+        run: |
+          python3 infra/scripts/build_target.py \
+            --target "${{ steps.request.outputs.target }}" \
+            --repository "${{ steps.request.outputs.repository }}" \
+            --sha "${{ steps.request.outputs.source_sha }}" \
+            --source source \
+            --output deployable
+
+      - name: Verify deployable integrity
+        run: |
+          python3 infra/scripts/verify_deployable.py \
+            --root deployable \
+            --target "${{ steps.request.outputs.target }}" \
+            --repository "${{ steps.request.outputs.repository }}" \
+            --sha "${{ steps.request.outputs.source_sha }}"
+
+      - name: Remove source checkout before provider credentials are exposed
+        run: rm -rf source
+
+      - name: Restore trusted private controller after build
+        run: |
+          set -euo pipefail
+          git -C infra reset --hard "${{ steps.controller.outputs.sha }}"
+          git -C infra clean -ffdqx
+
+      - name: Deploy Hoststar artifact
+        if: steps.request.outputs.mode == 'deploy' && steps.request.outputs.provider == 'hoststar'
+        env:
+          HOSTSTAR_FTP_PASSWORD: ${{ secrets.HOSTSTAR_FTP_PASSWORD }}
+          TARGET: ${{ steps.request.outputs.target }}
+        run: |
+          python3 infra/scripts/hoststar_deploy.py \
+            --target "$TARGET" \
+            --source deployable/site \
+            --backup-root "$RUNNER_TEMP/hoststar-backups"
+
+      - name: Deploy Cloudflare artifact
+        if: steps.request.outputs.mode == 'deploy' && steps.request.outputs.provider == 'cloudflare'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: bash infra/scripts/cloudflare_deploy.sh --source deployable
+
+      - name: Live production healthcheck
+        if: steps.request.outputs.mode == 'deploy'
+        run: python3 infra/scripts/healthcheck.py --target "${{ steps.request.outputs.target }}"
+
+      - name: Confirm dry-run
+        if: steps.request.outputs.mode == 'dry-run'
+        run: echo "Dry-run completed; nothing was published."
+
+      - name: Remove ephemeral deploy data
+        if: always()
+        run: rm -rf deployable "$RUNNER_TEMP/hoststar-backups" request.json
