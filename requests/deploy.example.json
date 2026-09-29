@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "request_id": "example-only",
+  "target": "apps.maffeo.ch",
+  "source_sha": "0000000000000000000000000000000000000000",
+  "mode": "dry-run"
+}
