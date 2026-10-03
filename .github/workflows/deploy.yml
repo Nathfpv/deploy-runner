@@ -138,7 +138,11 @@ jobs:
           node-version: ${{ steps.request.outputs.node_version }}
 
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install --yes rsync libimage-exiftool-perl python3-paramiko
+        run: sudo apt-get update && sudo apt-get install --yes rsync libimage-exiftool-perl python3-paramiko php-cli php-sqlite3 php-curl php-mysql
+
+      - name: Test Hoststar deployment safeguards
+        if: steps.request.outputs.target == 'agentrec.maffeo.ch'
+        run: python3 infra/tests/test_hoststar_deploy.py -v
 
       - name: Build and test without provider credentials
         run: |
@@ -172,10 +176,15 @@ jobs:
           HOSTSTAR_FTP_PASSWORD: ${{ secrets.HOSTSTAR_FTP_PASSWORD }}
           TARGET: ${{ steps.request.outputs.target }}
         run: |
+          PRIVATE_ARGS=()
+          if [ "$TARGET" = "agentrec.maffeo.ch" ]; then
+            PRIVATE_ARGS=(--private-source deployable/private)
+          fi
           python3 infra/scripts/hoststar_deploy.py \
             --target "$TARGET" \
             --source deployable/site \
-            --backup-root "$RUNNER_TEMP/hoststar-backups"
+            --backup-root "$RUNNER_TEMP/hoststar-backups" \
+            "${PRIVATE_ARGS[@]}"
 
       - name: Deploy Cloudflare artifact
         if: steps.request.outputs.mode == 'deploy' && steps.request.outputs.provider == 'cloudflare'
