@@ -1,0 +1,49 @@
+name: Deploy Cloudflare OIDC relay
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "cloudflare-deploy-relay/**"
+      - ".github/workflows/deploy-cloudflare-relay.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: c9fc92304d53c544852ae134d04aefe9
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Require existing Cloudflare credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo "::error::Missing CLOUDFLARE_API_TOKEN"; exit 1; }
+
+      - name: Deploy OIDC relay
+        working-directory: cloudflare-deploy-relay
+        run: npx --yes wrangler@4.129.1 deploy
+
+      - name: Store upstream token only inside Cloudflare
+        working-directory: cloudflare-deploy-relay
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$CLOUDFLARE_API_TOKEN" | npx --yes wrangler@4.129.1 secret put UPSTREAM_CLOUDFLARE_API_TOKEN --name maffeo-deploy-relay
+
+      - name: Verify relay health and print endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          json="$(curl -fsS             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain")"
+          subdomain="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["subdomain"])' <<<"$json")"
+          url="https://maffeo-deploy-relay.$subdomain.workers.dev"
+          curl -fsS "$url/health"
+          echo "RELAY_URL=$url"
