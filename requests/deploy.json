@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "request_id": "public-runner-hoststar-final-20260929-1",
-  "target": "apps.maffeo.ch",
-  "source_sha": "93977c8655ff96c95350a6ecf1af296e4a8e713f",
+  "request_id": "local-ai-final-closure-20261003-bf10ac8d",
+  "target": "local-ai",
+  "source_sha": "bf10ac8d74a9ff0b6899e0be5f635e671be2cfac",
   "mode": "deploy"
 }
