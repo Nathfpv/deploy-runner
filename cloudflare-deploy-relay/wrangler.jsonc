@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "maffeo-deploy-relay",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-03",
+  "workers_dev": true,
+  "vars": {
+    "EXPECTED_AUDIENCE": "maffeo-cloudflare-deploy",
+    "EXPECTED_REPOSITORY": "Nathfpv/local-ai",
+    "EXPECTED_REPOSITORY_ID": "1378482690",
+    "EXPECTED_REF": "refs/heads/main",
+    "EXPECTED_WORKFLOW_REF": "Nathfpv/local-ai/.github/workflows/deploy.yml@refs/heads/main",
+    "CLOUDFLARE_ACCOUNT_ID": "c9fc92304d53c544852ae134d04aefe9"
+  }
+}
