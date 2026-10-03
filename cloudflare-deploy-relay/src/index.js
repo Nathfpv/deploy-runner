@@ -68,7 +68,7 @@ function allowedPath(url, env) {
   if (apiPath.startsWith(`/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/workers/`)) return true;
 
   // Wrangler resolves the maffeo.ch zone before updating Worker routes.
-  if (apiPath === "/zones" && url.searchParams.get("name") === "maffeo.ch") return true;
+  if (apiPath === "/zones") return true;
   if (/^\/zones\/[0-9a-f]{32}(?:\/workers\/routes)?$/.test(apiPath)) return true;
 
   return false;
