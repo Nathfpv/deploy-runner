@@ -88,19 +88,32 @@ export default {
     const auth = request.headers.get("Authorization") || "";
     if (!auth.startsWith("Bearer ")) return new Response("Unauthorized", { status: 401 });
 
-    try {
-      await verifyGithubOidc(auth.slice(7), env);
-    } catch (err) {
-      return new Response(`Unauthorized: ${err.message}`, { status: 401 });
-    }
-
     if (!allowedPath(url, env)) {
       return new Response("Forbidden API path", { status: 403 });
     }
 
-    const upstreamUrl = UPSTREAM + url.pathname.slice("/client/v4".length) + url.search;
+    const apiPath = url.pathname.slice("/client/v4".length);
+    const assetUploadPath = `/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/workers/assets/upload`;
+    const isEphemeralAssetUpload = apiPath === assetUploadPath;
+
+    // Wrangler obtains a short-lived Cloudflare asset-upload bearer token from
+    // an earlier OIDC-authenticated API call. That token is intentionally not a
+    // GitHub JWT. For this single upload endpoint, preserve Cloudflare's own
+    // ephemeral bearer token instead of replacing it with the long-lived
+    // upstream credential. The token grants no general API access.
+    if (!isEphemeralAssetUpload) {
+      try {
+        await verifyGithubOidc(auth.slice(7), env);
+      } catch (err) {
+        return new Response(`Unauthorized: ${err.message}`, { status: 401 });
+      }
+    }
+
+    const upstreamUrl = UPSTREAM + apiPath + url.search;
     const headers = new Headers(request.headers);
-    headers.set("Authorization", `Bearer ${env.UPSTREAM_CLOUDFLARE_API_TOKEN}`);
+    if (!isEphemeralAssetUpload) {
+      headers.set("Authorization", `Bearer ${env.UPSTREAM_CLOUDFLARE_API_TOKEN}`);
+    }
     headers.set("Host", "api.cloudflare.com");
     headers.delete("cf-connecting-ip");
     headers.delete("cf-ipcountry");
