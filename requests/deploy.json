@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "request_id": "local-ai-final-closure-20261003-bf10ac8d",
-  "target": "local-ai",
-  "source_sha": "bf10ac8d74a9ff0b6899e0be5f635e671be2cfac",
-  "mode": "deploy"
+  "request_id": "agentrec-public-runner-dryrun-b147161b-20261003",
+  "target": "agentrec.maffeo.ch",
+  "source_sha": "b147161bfbeb27f0d9ae23906bcf2551e3076f9d",
+  "mode": "dry-run"
 }
